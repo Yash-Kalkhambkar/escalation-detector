@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Escalation Detector — Pipeline Edition</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f8fafc;
+            color: #1e293b;
+            line-height: 1.6;
+        }
+        
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        header h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        header p {
+            opacity: 0.9;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+        
+        .section {
+            background: white;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .section h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: #334155;
+        }
+        
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: #475569;
+        }
+        
+        input[type="text"],
+        input[type="number"],
+        input[type="email"],
+        textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-family: inherit;
+            transition: border-color 0.2s;
+        }
+        
+        input:focus,
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+        
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        button:hover {
+            background: #5568d3;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+        
+        .badge-escalate {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+        
+        .badge-no-escalate {
+            background: #dcfce7;
+            color: #16a34a;
+        }
+        
+        .result {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: #f1f5f9;
+            border-radius: 6px;
+            display: none;
+        }
+        
+        .result.show {
+            display: block;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+        
+        th {
+            background: #f1f5f9;
+            padding: 0.75rem;
+            text-align: left;
+            font-weight: 600;
+            color: #475569;
+            border-bottom: 2px solid #e2e8f0;
+        }
+        
+        td {
+            padding: 0.75rem;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        tr:hover {
+            background: #f8fafc;
+        }
+        
+        .timeline {
+            margin-top: 1rem;
+        }
+        
+        .timeline-item {
+            padding: 1rem;
+            margin-bottom: 1rem;
+            background: #f8fafc;
+            border-left: 3px solid #667eea;
+            border-radius: 4px;
+        }
+        
+        .timeline-item h3 {
+            font-size: 1.1rem;
+            margin-bottom: 0.5rem;
+            color: #334155;
+        }
+        
+        .error {
+            color: #dc2626;
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🚨 Escalation Detector — Pipeline Edition</h1>
+        <p>Stage 5: LLM-Powered Support Ticket Escalation Analysis</p>
+    </header>
+    
+    <div class="container">
+        <!-- Pipeline Mode Section -->
+        <div class="section">
+            <h2>📋 From Ticket ID (Pipeline Mode)</h2>
+            <form onsubmit="submitPipelineCheck(event)">
+                <div class="form-group">
+                    <label for="pipeline-ticket-id">Ticket ID (from Stage 4)</label>
+                    <input type="number" id="pipeline-ticket-id" required>
+                </div>
+                <button type="submit">Check Escalation</button>
+            </form>
+            <div id="pipeline-result" class="result"></div>
+        </div>
+        
+        <!-- Manual Check Section -->
+        <div class="section">
+            <h2>✍️ Manual Check</h2>
+            <form onsubmit="submitManualCheck(event)">
+                <div class="form-group">
+                    <label for="manual-ticket-id">Ticket ID</label>
+                    <input type="text" id="manual-ticket-id" required>
+                </div>
+                <div class="form-group">
+                    <label for="manual-email">Customer Email</label>
+                    <input type="email" id="manual-email" required>
+                </div>
+                <div class="form-group">
+                    <label for="manual-conversation">Conversation</label>
+                    <textarea id="manual-conversation" required></textarea>
+                </div>
+                <button type="submit">Check Escalation</button>
+            </form>
+            <div id="manual-result" class="result"></div>
+        </div>
+        
+        <!-- Pipeline Trace Section -->
+        <div class="section">
+            <h2>🔍 Pipeline Trace</h2>
+            <form onsubmit="loadPipelineTrace(event)">
+                <div class="form-group">
+                    <label for="trace-email">Customer Email</label>
+                    <input type="email" id="trace-email" required>
+                </div>
+                <button type="submit">Trace Journey</button>
+            </form>
+            <div id="trace-result" class="result"></div>
+        </div>
+        
+        <!-- Recent Logs Section -->
+        <div class="section">
+            <h2>📊 Recent Escalation Logs</h2>
+            <button onclick="loadRecentLogs()">Refresh</button>
+            <table id="logs-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Ticket ID</th>
+                        <th>Email</th>
+                        <th>Escalate</th>
+                        <th>Reason</th>
+                        <th>Created At</th>
+                    </tr>
+                </thead>
+                <tbody id="logs-tbody">
+                    <tr><td colspan="6" style="text-align: center;">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        
+        function submitPipelineCheck(event) {
+            event.preventDefault();
+            const ticketId = document.getElementById('pipeline-ticket-id').value;
+            const resultDiv = document.getElementById('pipeline-result');
+            
+            fetch(`${API_BASE}/escalation/from-ticket`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticket_id: parseInt(ticketId) })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.detail) {
+                    resultDiv.innerHTML = `<p class="error">Error: ${data.detail}</p>`;
+                } else {
+                    const badgeClass = data.escalate ? 'badge-escalate' : 'badge-no-escalate';
+                    const badgeText = data.escalate ? 'ESCALATE' : 'NO ESCALATION';
+                    resultDiv.innerHTML = `
+                        <p><strong>Result:</strong> <span class="badge ${badgeClass}">${badgeText}</span></p>
+                        <p><strong>Reason:</strong> ${data.reason}</p>
+                        <p><strong>Email:</strong> ${data.email}</p>
+                        <p><strong>Log ID:</strong> ${data.log_id}</p>
+                    `;
+                    loadRecentLogs();
+                }
+                resultDiv.classList.add('show');
+            })
+            .catch(error => {
+                resultDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                resultDiv.classList.add('show');
+            });
+        }
+        
+        function submitManualCheck(event) {
+            event.preventDefault();
+            const ticketId = document.getElementById('manual-ticket-id').value;
+            const email = document.getElementById('manual-email').value;
+            const conversation = document.getElementById('manual-conversation').value;
+            const resultDiv = document.getElementById('manual-result');
+            
+            fetch(`${API_BASE}/escalation/check`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticket_id: ticketId, email: email, conversation: conversation })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.detail) {
+                    resultDiv.innerHTML = `<p class="error">Error: ${data.detail}</p>`;
+                } else {
+                    const badgeClass = data.escalate ? 'badge-escalate' : 'badge-no-escalate';
+                    const badgeText = data.escalate ? 'ESCALATE' : 'NO ESCALATION';
+                    resultDiv.innerHTML = `
+                        <p><strong>Result:</strong> <span class="badge ${badgeClass}">${badgeText}</span></p>
+                        <p><strong>Reason:</strong> ${data.reason}</p>
+                        <p><strong>Log ID:</strong> ${data.log_id}</p>
+                    `;
+                    loadRecentLogs();
+                }
+                resultDiv.classList.add('show');
+            })
+            .catch(error => {
+                resultDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                resultDiv.classList.add('show');
+            });
+        }
+        
+        function loadPipelineTrace(event) {
+            event.preventDefault();
+            const email = document.getElementById('trace-email').value;
+            const resultDiv = document.getElementById('trace-result');
+            
+            fetch(`${API_BASE}/pipeline/trace/${encodeURIComponent(email)}`)
+            .then(response => response.json())
+            .then(data => {
+                let html = `<h3>Customer Journey for ${data.email}</h3>`;
+                html += `<p><strong>Total Stages:</strong> ${data.summary.total_stages}</p>`;
+                
+                html += '<div class="timeline">';
+                
+                if (data.leads.length > 0) {
+                    html += '<div class="timeline-item">';
+                    html += '<h3>Stage 1: Leads</h3>';
+                    data.leads.forEach(lead => {
+                        html += `<p>• ${lead.name} (${lead.company}) - Score: ${lead.score}</p>`;
+                    });
+                    html += '</div>';
+                }
+                
+                if (data.followups.length > 0) {
+                    html += '<div class="timeline-item">';
+                    html += '<h3>Stage 2: Followups</h3>';
+                    data.followups.forEach(followup => {
+                        html += `<p>• ${followup.prospect} - ${followup.days_since} days since last interaction</p>`;
+                    });
+                    html += '</div>';
+                }
+                
+                if (data.deals.length > 0) {
+                    html += '<div class="timeline-item">';
+                    html += '<h3>Stage 3: Deals</h3>';
+                    data.deals.forEach(deal => {
+                        html += `<p>• ${deal.prospect} - Stage: ${deal.stage}</p>`;
+                    });
+                    html += '</div>';
+                }
+                
+                if (data.tickets.length > 0) {
+                    html += '<div class="timeline-item">';
+                    html += '<h3>Stage 4: Tickets</h3>';
+                    data.tickets.forEach(ticket => {
+                        html += `<p>• Ticket #${ticket.id} - ${ticket.category} (${ticket.urgency})</p>`;
+                    });
+                    html += '</div>';
+                }
+                
+                if (data.escalation_logs.length > 0) {
+                    html += '<div class="timeline-item">';
+                    html += '<h3>Stage 5: Escalations</h3>';
+                    data.escalation_logs.forEach(log => {
+                        const badge = log.escalate ? 'badge-escalate' : 'badge-no-escalate';
+                        const text = log.escalate ? 'ESCALATED' : 'NOT ESCALATED';
+                        html += `<p>• Ticket #${log.ticket_id} - <span class="badge ${badge}">${text}</span> - ${log.reason}</p>`;
+                    });
+                    html += '</div>';
+                }
+                
+                if (data.summary.total_stages === 0) {
+                    html += '<p>No pipeline data found for this email.</p>';
+                }
+                
+                html += '</div>';
+                resultDiv.innerHTML = html;
+                resultDiv.classList.add('show');
+            })
+            .catch(error => {
+                resultDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                resultDiv.classList.add('show');
+            });
+        }
+        
+        function loadRecentLogs() {
+            fetch(`${API_BASE}/escalation/logs`)
+            .then(response => response.json())
+            .then(data => {
+                const tbody = document.getElementById('logs-tbody');
+                if (data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align: center;">No logs found</td></tr>';
+                } else {
+                    tbody.innerHTML = data.map(log => {
+                        const badgeClass = log.escalate ? 'badge-escalate' : 'badge-no-escalate';
+                        const badgeText = log.escalate ? 'YES' : 'NO';
+                        const date = new Date(log.created_at).toLocaleString();
+                        return `
+                            <tr>
+                                <td>${log.id}</td>
+                                <td>${log.ticket_id}</td>
+                                <td>${log.email || 'N/A'}</td>
+                                <td><span class="badge ${badgeClass}">${badgeText}</span></td>
+                                <td>${log.reason}</td>
+                                <td>${date}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
+            })
+            .catch(error => {
+                const tbody = document.getElementById('logs-tbody');
+                tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #dc2626;">Error loading logs: ${error.message}</td></tr>`;
+            });
+        }
+        
+        // Load logs on page load
+        window.addEventListener('DOMContentLoaded', loadRecentLogs);
+    </script>
+</body>
+</html>

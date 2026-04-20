@@ -1,0 +1,507 @@
+# Architecture Documentation
+
+## System Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        B2B CRM PIPELINE                              │
+│                     (5-Stage Architecture)                           │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│ Stage 1  │───▶│ Stage 2  │───▶│ Stage 3  │───▶│ Stage 4  │───▶│ Stage 5  │
+│  LEADS   │    │ FOLLOWUPS│    │  DEALS   │    │ TICKETS  │    │ESCALATION│
+└──────────┘    └──────────┘    └──────────┘    └──────────┘    └──────────┘
+     │               │               │               │               │
+     ▼               ▼               ▼               ▼               ▼
+┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│  leads   │    │followups │    │  deals   │    │ tickets  │    │escalation│
+│  table   │    │  table   │    │  table   │    │  table   │    │   logs   │
+└──────────┘    └──────────┘    └──────────┘    └──────────┘    └──────────┘
+
+                    ▲─────────────────────────────────────────────▲
+                    │         Connected by EMAIL field            │
+                    └─────────────────────────────────────────────┘
+```
+
+## Application Architecture (Stage 5)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         FRONTEND (HTML/CSS/JS)                       │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐             │
+│  │ Pipeline Mode│  │ Manual Check │  │Pipeline Trace│             │
+│  └──────────────┘  └──────────────┘  └──────────────┘             │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              │ HTTP/JSON
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                         FASTAPI APPLICATION                          │
+│                                                                      │
+│  ┌────────────────────────────────────────────────────────────┐   │
+│  │                    ROUTERS (Endpoints)                      │   │
+│  │  ┌──────────────────┐         ┌──────────────────┐        │   │
+│  │  │ escalation.py    │         │  pipeline.py     │        │   │
+│  │  │ - /check         │         │  - /trace/{email}│        │   │
+│  │  │ - /from-ticket   │         └──────────────────┘        │   │
+│  │  │ - /logs          │                                      │   │
+│  │  │ - /stats         │                                      │   │
+│  │  │ - /health        │                                      │   │
+│  │  └──────────────────┘                                      │   │
+│  └────────────────────────────────────────────────────────────┘   │
+│                              │                                      │
+│  ┌────────────────────────────────────────────────────────────┐   │
+│  │                    SERVICES (Business Logic)                │   │
+│  │  ┌──────────────────────────────────────────────────────┐ │   │
+│  │  │  llm.py - Groq API Integration                       │ │   │
+│  │  │  - check_escalation(context) -> decision             │ │   │
+│  │  └──────────────────────────────────────────────────────┘ │   │
+│  └────────────────────────────────────────────────────────────┘   │
+│                              │                                      │
+│  ┌────────────────────────────────────────────────────────────┐   │
+│  │                    MODELS (Database ORM)                    │   │
+│  │  - EscalationLog (Read/Write)                              │   │
+│  │  - Ticket (Read-Only)                                      │   │
+│  │  - Lead (Read-Only)                                        │   │
+│  │  - Followup (Read-Only)                                    │   │
+│  │  - Deal (Read-Only)                                        │   │
+│  └────────────────────────────────────────────────────────────┘   │
+│                              │                                      │
+│  ┌────────────────────────────────────────────────────────────┐   │
+│  │                DATABASE (SQLAlchemy + psycopg2)             │   │
+│  │  - SessionLocal (connection pool)                          │   │
+│  │  - get_db() dependency injection                           │   │
+│  └────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+                    │                           │
+                    │                           │
+                    ▼                           ▼
+        ┌──────────────────────┐    ┌──────────────────────┐
+        │   PostgreSQL DB      │    │    Groq API          │
+        │   (DigitalOcean)     │    │  (llama-3.1-8b)      │
+        │   - SSL Required     │    │  - Escalation AI     │
+        └──────────────────────┘    └──────────────────────┘
+```
+
+## Data Flow Diagrams
+
+### 1. Pipeline-Based Escalation Flow
+
+```
+┌─────────┐
+│  User   │
+└────┬────┘
+     │ 1. Submit ticket_id
+     ▼
+┌─────────────────────┐
+│ POST /from-ticket   │
+└─────────┬───────────┘
+          │ 2. Query by ID
+          ▼
+┌─────────────────────┐
+│  tickets table      │
+│  (Stage 4 data)     │
+└─────────┬───────────┘
+          │ 3. Fetch ticket details
+          │    - category
+          │    - urgency
+          │    - status
+          │    - text
+          │    - draft_reply
+          │    - email
+          ▼
+┌─────────────────────┐
+│ Enrich Context      │
+│ "Category: X        │
+│  Urgency: Y         │
+│  Text: Z..."        │
+└─────────┬───────────┘
+          │ 4. Send enriched context
+          ▼
+┌─────────────────────┐
+│  Groq API (LLM)     │
+│  llama-3.1-8b       │
+└─────────┬───────────┘
+          │ 5. Return decision
+          │    {"escalate": true/false,
+          │     "reason": "..."}
+          ▼
+┌─────────────────────┐
+│ escalation_logs     │
+│ (Save decision)     │
+└─────────┬───────────┘
+          │ 6. Return response
+          ▼
+┌─────────────────────┐
+│  User receives      │
+│  - escalate: bool   │
+│  - reason: string   │
+│  - email: string    │
+│  - log_id: int      │
+└─────────────────────┘
+```
+
+### 2. Manual Escalation Flow
+
+```
+┌─────────┐
+│  User   │
+└────┬────┘
+     │ 1. Submit manual data
+     │    - ticket_id (string)
+     │    - email
+     │    - conversation
+     ▼
+┌─────────────────────┐
+│  POST /check        │
+└─────────┬───────────┘
+          │ 2. Send conversation
+          ▼
+┌─────────────────────┐
+│  Groq API (LLM)     │
+└─────────┬───────────┘
+          │ 3. Return decision
+          ▼
+┌─────────────────────┐
+│ escalation_logs     │
+│ (Save with email)   │
+└─────────┬───────────┘
+          │ 4. Return response
+          ▼
+┌─────────────────────┐
+│  User receives      │
+│  escalation result  │
+└─────────────────────┘
+```
+
+### 3. Pipeline Trace Flow
+
+```
+┌─────────┐
+│  User   │
+└────┬────┘
+     │ 1. Submit email
+     ▼
+┌─────────────────────┐
+│ GET /trace/{email}  │
+└─────────┬───────────┘
+          │ 2. Query all tables
+          ├──────────────────────┐
+          │                      │
+          ▼                      ▼
+┌──────────────┐      ┌──────────────┐
+│ leads table  │      │followups tbl │
+└──────┬───────┘      └──────┬───────┘
+       │                     │
+       ├─────────────────────┤
+       │                     │
+       ▼                     ▼
+┌──────────────┐      ┌──────────────┐
+│ deals table  │      │ tickets tbl  │
+└──────┬───────┘      └──────┬───────┘
+       │                     │
+       └──────────┬──────────┘
+                  │
+                  ▼
+          ┌──────────────┐
+          │escalation tbl│
+          └──────┬───────┘
+                 │ 3. Aggregate results
+                 ▼
+          ┌──────────────┐
+          │ Build timeline│
+          │ - Stage 1 data│
+          │ - Stage 2 data│
+          │ - Stage 3 data│
+          │ - Stage 4 data│
+          │ - Stage 5 data│
+          └──────┬───────┘
+                 │ 4. Return journey
+                 ▼
+          ┌──────────────┐
+          │  User sees   │
+          │  complete    │
+          │  customer    │
+          │  journey     │
+          └──────────────┘
+```
+
+## Database Schema
+
+### escalation_logs (Our Table - Read/Write)
+
+```sql
+CREATE TABLE escalation_logs (
+    id SERIAL PRIMARY KEY,
+    ticket_id VARCHAR NOT NULL,
+    conversation TEXT NOT NULL,
+    escalate BOOLEAN NOT NULL,
+    reason VARCHAR NOT NULL,
+    email VARCHAR,  -- Pipeline connector
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_escalation_email ON escalation_logs(email);
+CREATE INDEX idx_escalation_ticket ON escalation_logs(ticket_id);
+```
+
+### tickets (Stage 4 - Read-Only)
+
+```sql
+CREATE TABLE tickets (
+    id SERIAL PRIMARY KEY,
+    text TEXT NOT NULL,
+    email VARCHAR NOT NULL,  -- Pipeline connector
+    category VARCHAR NOT NULL,
+    urgency VARCHAR NOT NULL,
+    status VARCHAR NOT NULL,
+    draft_reply TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+### Other Pipeline Tables (Read-Only)
+
+```sql
+-- Stage 1
+CREATE TABLE leads (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR NOT NULL,
+    company VARCHAR NOT NULL,
+    description TEXT,
+    score INTEGER,
+    score_reason VARCHAR,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Stage 2
+CREATE TABLE followups (
+    id SERIAL PRIMARY KEY,
+    prospect VARCHAR NOT NULL,
+    last_interaction VARCHAR,
+    days_since INTEGER,
+    email VARCHAR,  -- Pipeline connector
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Stage 3
+CREATE TABLE deals (
+    id SERIAL PRIMARY KEY,
+    prospect VARCHAR NOT NULL,
+    conversation TEXT,
+    stage VARCHAR NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+## API Architecture
+
+### Request/Response Flow
+
+```
+Client Request
+     │
+     ▼
+┌─────────────────┐
+│ CORS Middleware │  (Allow all origins)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ FastAPI Router  │  (Route to endpoint)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Pydantic Schema │  (Validate request)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Endpoint Logic  │  (Business logic)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Database Query  │  (SQLAlchemy ORM)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ LLM Service     │  (If needed)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Response Schema │  (Format response)
+└────────┬────────┘
+         │
+         ▼
+Client Response
+```
+
+## Security Architecture
+
+### Current Implementation
+
+```
+┌─────────────────────────────────────────┐
+│         Security Measures               │
+├─────────────────────────────────────────┤
+│ ✓ Environment variables (.env)         │
+│ ✓ SSL/TLS for database (required)      │
+│ ✓ CORS configured                       │
+│ ✓ Input validation (Pydantic)          │
+│ ✓ SQL injection protection (ORM)       │
+│ ✓ Read-only access to pipeline tables  │
+├─────────────────────────────────────────┤
+│         Not Implemented (V2)            │
+├─────────────────────────────────────────┤
+│ ✗ Authentication/Authorization          │
+│ ✗ Rate limiting                         │
+│ ✗ API key validation                    │
+│ ✗ Request logging                       │
+│ ✗ Audit trails                          │
+└─────────────────────────────────────────┘
+```
+
+## Deployment Architecture
+
+### Development Environment
+
+```
+┌──────────────────────────────────┐
+│      Local Development           │
+├──────────────────────────────────┤
+│ • uvicorn --reload               │
+│ • SQLite or local PostgreSQL     │
+│ • .env with dev credentials      │
+│ • Frontend: file:// protocol     │
+└──────────────────────────────────┘
+```
+
+### Production Environment (Recommended)
+
+```
+┌─────────────────────────────────────────────┐
+│              Load Balancer                  │
+└──────────────┬──────────────────────────────┘
+               │
+    ┌──────────┴──────────┐
+    │                     │
+    ▼                     ▼
+┌─────────┐         ┌─────────┐
+│ App     │         │ App     │
+│ Server 1│         │ Server 2│
+└────┬────┘         └────┬────┘
+     │                   │
+     └────────┬──────────┘
+              │
+              ▼
+    ┌──────────────────┐
+    │   PostgreSQL     │
+    │   (Managed DB)   │
+    └──────────────────┘
+```
+
+## Technology Stack Details
+
+### Backend Stack
+
+```
+FastAPI (Web Framework)
+    │
+    ├─── Pydantic (Data Validation)
+    │
+    ├─── SQLAlchemy (ORM)
+    │    └─── psycopg2-binary (PostgreSQL Driver)
+    │
+    ├─── Groq SDK (LLM Integration)
+    │
+    └─── Uvicorn (ASGI Server)
+```
+
+### Frontend Stack
+
+```
+HTML5
+    │
+    ├─── CSS3 (Inline Styles)
+    │
+    └─── Vanilla JavaScript
+         └─── Fetch API (HTTP Requests)
+```
+
+## Performance Considerations
+
+### Database Optimization
+
+- **Indexes**: Created on `email` and `ticket_id` columns
+- **Connection Pooling**: SQLAlchemy session management
+- **Read-Only Queries**: No locks on pipeline tables
+
+### API Optimization
+
+- **Synchronous Endpoints**: Simple, predictable performance
+- **Minimal Dependencies**: Fast startup time
+- **Efficient Queries**: Filter at database level
+
+### LLM Optimization
+
+- **Low Temperature**: 0.1 for consistent results
+- **Token Limit**: 200 tokens max for fast responses
+- **Error Handling**: Graceful fallbacks
+
+## Monitoring and Observability
+
+### Health Check Endpoint
+
+```
+GET /health
+
+Response:
+{
+  "status": "healthy" | "degraded",
+  "database": "connected" | "disconnected",
+  "llm": "operational" | "unavailable"
+}
+```
+
+### Metrics to Monitor
+
+- API response times
+- Database query performance
+- LLM API latency
+- Error rates
+- Escalation rate trends
+
+## Future Architecture Enhancements
+
+### Planned for V3.0
+
+```
+┌─────────────────────────────────────────┐
+│         Future Enhancements             │
+├─────────────────────────────────────────┤
+│ • Authentication (JWT)                  │
+│ • Rate limiting (Redis)                 │
+│ • Caching layer (Redis)                 │
+│ • Message queue (RabbitMQ/Celery)      │
+│ • Real-time updates (WebSockets)        │
+│ • Microservices architecture            │
+│ • Container orchestration (K8s)         │
+│ • Monitoring (Prometheus/Grafana)       │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## Quick Reference
+
+**Application Type**: Monolithic Web Application  
+**Architecture Pattern**: Layered (Router → Service → Model)  
+**Database Pattern**: ORM with Read/Write Separation  
+**API Style**: RESTful JSON  
+**Deployment**: Single-server or load-balanced  
+**Scalability**: Horizontal (add more app servers)
